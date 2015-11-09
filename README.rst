@@ -44,6 +44,11 @@ At the command line::
   git clone https://github.com/ParkerLab/atactk
   pip install ./atactk
 
+Documentation
+=============
+
+http://atactk.readthedocs.org/en/latest/
+
 License
 =======
 
