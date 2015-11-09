@@ -41,7 +41,8 @@ Installation
 
 At the command line::
 
-  pip install atactk
+  git clone https://github.com/ParkerLab/atactk
+  pip install ./atactk
 
 License
 =======
