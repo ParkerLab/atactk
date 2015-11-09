@@ -1,0 +1,116 @@
+#!/usr/bin/env python
+
+#
+# Trims putative adapter sequence from two files containing paired end
+# reads.
+#
+# Based on pyadapter_trim.py by Jason Buenrostro, Stanford University
+#
+
+
+from __future__ import print_function
+
+import argparse
+import codecs
+import collections
+import gzip
+import os
+import re
+import string
+import sys
+
+import Levenshtein
+
+import atactk.data
+
+
+FQ_FILENAME_RE = re.compile('^(?P<basename>[^/]+)\.(?P<fq>f(?:ast)?q)*(?P<gz>\.gz)*$')
+def make_trimmed_filename(original_filename):
+    output_directory = os.path.dirname(original_filename)
+    basename = os.path.basename(original_filename)
+    m = FQ_FILENAME_RE.match(basename)
+    if m is not None:
+        basename = m.group('basename')
+
+    trimmed_filename = os.path.abspath(os.path.join(output_directory, basename + '.trimmed.fastq.gz'))
+    return trimmed_filename
+
+
+def fuzzy_align(search_seq, target_seq, max_distance):
+    """Align with a limit on edit distance.
+
+    Returns the first alignment found.
+
+    """
+
+    search_seq_len = len(search_seq)
+    alignments = []
+
+    for i, base in enumerate(target_seq):
+        window = target_seq[i:i + search_seq_len]  # sliding window the size of search_seq
+        distance = Levenshtein.distance(window, search_seq)
+        if distance <= max_distance:
+            alignments.append((i, distance))
+
+    if alignments:
+        return sorted(alignments, key=lambda item: item[1])[0]
+
+    return None, None
+
+
+def trim_record(rec, start=0, end=-1):
+    return [rec[0], rec[1][start:end], rec[2], rec[3][start:end]]
+
+
+def trim_pair(pair):
+    forward_read, reverse_read = pair
+    #
+    # try to align reads to themselves
+    #
+
+    reverse_read_rc = atactk.data.reverse_complement(reverse_read[1][:args.rc_length])
+
+    # look for a perfect match, meaning the reverse complement of
+    # the reverse read matches the forward read
+    try:
+        idx = forward_read[1].rindex(reverse_read_rc)  # we have a winner!
+    except ValueError:
+        if args.edit_distance > 0:
+            # not a perfect match, so if mismatches are allowed, try a fuzzy match
+            idx, distance = fuzzy_align(reverse_read_rc, forward_read[1], args.edit_distance)
+
+    # trim reads if they aligned well enough
+    if idx is not None and idx > 0:
+        cut = idx + args.rc_length - args.fudge
+
+        forward_read = trim_record(forward_read, trim_start, cut)
+        reverse_read = trim_record(reverse_read, trim_start, cut)
+
+    forward_rec = ['%s\n' % i for i in forward_read]
+    reverse_rec = ['%s\n' % i for i in reverse_read]
+    return forward_rec, reverse_rec
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Trim adapters from paired-end HTS reads.')
+    parser.add_argument('-d', '--max-edit-distance', type=int, default=1, dest='edit_distance', help='The maximum edit distance permitted when aligning the paired reads (default: 1).')
+    parser.add_argument('-f', '--fudge', type=int, default=1, dest='fudge', help='An arbitrary number of extra bases to trim from the ends of reads (default: 1) because the original pyadapter_trim.py script did so.')
+    parser.add_argument('-s', '--trim-from-start', type=int, default=0, dest='trim_start', help='Trim this number of bases from the start of each sequence (default: 0).')
+    parser.add_argument('-r', '--rc-length', type=int, default=20, dest='rc_length', help='Use the reverse complement of this number of bases from the beginning of the reverse read to align the reads (default: 20).')
+    parser.add_argument('-v', '--verbose', action='store_true', dest='verbose', help='Report on the handling of each FASTQ record.')
+    parser.add_argument('forward', help='The (optionally gzipped) FASTQ file containing the forward reads.')
+    parser.add_argument('reverse', help='The (optionally gzipped) FASTQ file containing the reverse reads.')
+
+    args = parser.parse_args()
+
+    trim_start = args.trim_start
+
+    pairs = atactk.data.make_fastq_pair_reader(args.forward, args.reverse)
+
+    forward_trimmed_file = gzip.open(make_trimmed_filename(args.forward), 'wt')
+    reverse_trimmed_file = gzip.open(make_trimmed_filename(args.reverse), 'wt')
+
+    for pair in pairs:
+        forward_rec, reverse_rec = trim_pair(pair)
+        forward_trimmed_file.writelines(forward_rec)
+        reverse_trimmed_file.writelines(reverse_rec)
