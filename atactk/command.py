@@ -19,11 +19,6 @@ import sys
 import sexpdata
 
 
-__author__ = 'The Parker Lab'
-__email__ = 'parkerlab-software@umich.edu'
-__version__ = '0.1.0'
-
-
 def check_bins_for_overlap(bins):
     """
     Make sure bins don't overlap.

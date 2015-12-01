@@ -14,11 +14,6 @@ import collections
 import operator
 
 
-__author__ = 'The Parker Lab'
-__email__ = 'parkerlab-software@umich.edu'
-__version__ = '0.1.0'
-
-
 def add_lists(l1, l2):
     """
     Adds the values of two lists, entrywise.

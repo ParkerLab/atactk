@@ -20,11 +20,6 @@ import atactk.data
 import atactk.util
 
 
-__author__ = 'The Parker Lab'
-__email__ = 'parkerlab-software@umich.edu'
-__version__ = '0.1.0'
-
-
 def reduce_scores(scores, resolution):
     """
     Reduce a sequence of scores by summing every `resolution` values.
@@ -77,7 +72,7 @@ def aggregate_scores(scores, extension, resolution):
     )
 
 
-def find_cut_point(aligned_segment):
+def find_cut_point(aligned_segment, cut_point_offset=4):
     """Return the position of the given aligned segment's ATAC-seq cut point.
 
     Parameters
@@ -91,15 +86,15 @@ def find_cut_point(aligned_segment):
         Position of the ATAC-seq cut point.
     """
     if aligned_segment.is_reverse:
-        # the cut point is the reference_end minus 5 (pysam's
-        # reference_end is one past the last aligned residue)
-        cut_point = aligned_segment.reference_end - 5
+        # the cut point is the reference_end minus (cut_point_offset + 1)
+        # (pysam's reference_end is one past the last aligned residue)
+        cut_point = aligned_segment.reference_end - (cut_point_offset + 1)
     else:
-        cut_point = aligned_segment.reference_start + 4  # start of the read plus 4
+        cut_point = aligned_segment.reference_start + cut_point_offset  # start of the read plus offset
     return cut_point
 
 
-def count_cut_points(aligned_segments, start, end):
+def count_cut_points(aligned_segments, start, end, cut_point_offset=4):
     """
     Return any cut points in the region from the aligned segments.
 
@@ -126,7 +121,7 @@ def count_cut_points(aligned_segments, start, end):
 
     cut_points_in_region = []
     for segment in aligned_segments:
-        cut_point = find_cut_point(segment)
+        cut_point = find_cut_point(segment, cut_point_offset)
         if start <= cut_point < end:
             cut_points_in_region.append(cut_point)
 
@@ -186,7 +181,7 @@ def add_cut_points_to_region_tree(region_tree, group_key, strand, cut_points):
                 region_tree[position][group_key][strand] += count
 
 
-def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, quality, feature, verbose=False):
+def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, quality, feature, cut_point_offset=4, verbose=False):
     """
     Count the number of transposition events around the given feature.
 
@@ -243,8 +238,8 @@ def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, 
             forward_aligned_segments = [a for a in aligned_segments_in_bin if not a.is_reverse]
             reverse_aligned_segments = [a for a in aligned_segments_in_bin if a.is_reverse]
 
-            forward_cut_points = count_cut_points(forward_aligned_segments, feature.region_start, feature.region_end)
-            reverse_cut_points = count_cut_points(reverse_aligned_segments, feature.region_start, feature.region_end)
+            forward_cut_points = count_cut_points(forward_aligned_segments, feature.region_start, feature.region_end, cut_point_offset)
+            reverse_cut_points = count_cut_points(reverse_aligned_segments, feature.region_start, feature.region_end, cut_point_offset)
 
             if feature.is_reverse:
                 forward_cut_points, reverse_cut_points = list(reversed(reverse_cut_points)), list(reversed(forward_cut_points))

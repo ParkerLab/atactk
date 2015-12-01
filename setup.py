@@ -20,7 +20,7 @@ test_requirements = []
 
 setup(
     name='atactk',
-    version='0.1.0',
+    version='0.1.1',
     description="A toolkit for working with ATAC-seq data.",
     long_description=readme + '\n\n',
     author="The Parker Lab",

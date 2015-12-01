@@ -18,11 +18,6 @@ import gzip
 import sys
 
 
-__author__ = 'The Parker Lab'
-__email__ = 'parkerlab-software@umich.edu'
-__version__ = '0.1.0'
-
-
 NUCLEOTIDE_COMPLEMENTS = {
     "A": "T",
     "C": "G",
