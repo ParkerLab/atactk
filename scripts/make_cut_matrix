@@ -14,11 +14,14 @@ from __future__ import print_function
 
 import argparse
 import collections
+import datetime
 import functools
+import logging
 import multiprocessing
 import multiprocessing.managers
 import signal
 import sys
+import time
 import textwrap
 import traceback
 
@@ -27,10 +30,36 @@ import atactk.data
 import atactk.metrics
 
 
+LOGGING_FORMAT = '%(asctime)s %(levelname)s %(message)s'
+
+
 def worker_init():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
+
+def humanize_time(seconds):
+    s = ''
+    days = hours = minutes = 0
+    if seconds >= 86400:
+        days = seconds // 86400
+        seconds = seconds % 86400
+        s += '{:.0f}d '.format(days)
+    if seconds >= 3600:
+        hours = seconds // 3600
+        seconds = seconds % 3600
+        s += '{:.0f}h '.format(hours)
+    if seconds >= 60:
+        minutes = seconds // 60
+        seconds = seconds % 60
+        s += '{:.0f}m '.format(minutes)
+    if not s:
+        s += '{:.2f}s'.format(seconds)
+    return s
+
+
 if __name__ == '__main__':
+    job_start = time.time()
+
     parser = argparse.ArgumentParser(
         prog='make_cut_matrix',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -131,7 +160,7 @@ if __name__ == '__main__':
     parser.add_argument('-F', '--exclude-flags', type=int, dest='exclude_flags', action='append', help='A SAM flag used to exclude alignments from the BAM file. More than one may be specified. Alignments matching any exclude flag will not be counted. The default is to exclude all unmapped reads/mates by filtering out any alignments with SAM flags 4 or 8 set.')
     parser.add_argument('-f', '--include-flags', type=int, dest='include_flags', action='append', help='A SAM flag that determines which alignments from the BAM file will be included in the counts. More than one may be specified. Any alignment matching any include flag will be counted. The default is to include properly paired and mapped reads by filtering for SAM flags 83, 99, 147, or 163.')
     parser.add_argument('-o', '--cut-point-offset', type=int, default=4, dest='cut_point_offset', help='The position of cut points relative to the ends of reads, as a number of bases (default: 4).')
-    parser.add_argument('-p', '--parallel', type=int, default=multiprocessing.cpu_count(), dest='parallel', help='The number of parallel scoring processes to use (default: number of available CPUs).')
+    parser.add_argument('-p', '--parallel', type=int, default=1, dest='parallel', help='The number of parallel scoring processes to use (default: 1).')
     parser.add_argument('-q', '--quality', type=int, default=30, dest='quality', help='The minimum mapping quality required for a read to be counted (default: 30).')
     parser.add_argument('-r', '--region-extension', type=int, default=100, dest='extension', help='The number of bases to score on either side of the motifs (default: 100).')
     parser.add_argument('-s', '--reverse-motif-shift', type=int, default=0, dest='reverse_motif_shift', help='If supplied, the extended region around motifs on the reverse strand will be shifted upstream by this number of bases.')
@@ -153,9 +182,14 @@ if __name__ == '__main__':
     else:
         args.exclude_flags = [4, 8]
 
-    if args.verbose:
-        print('Using %s concurrent scoring processes' % args.parallel, file=sys.stderr)
-        print('Filtering alignments for quality >= %s, with flags %s and without flags %s' % (args.quality, args.include_flags, args.exclude_flags), file=sys.stderr)
+    loglevel = args.verbose and logging.DEBUG or logging.INFO
+    logging.basicConfig(level=loglevel, format=LOGGING_FORMAT)
+    logger = logging.getLogger('make_cut_matrix')
+
+    if args.parallel > 1:
+        logger.info('Using %s concurrent scoring processes' % args.parallel)
+    logger.info('Filtering alignments for quality >= %s, with flags %s and without flags %s' % (args.quality, args.include_flags, args.exclude_flags))
+    logger.info('Using these template size bins: %s' % args.bins)
 
     matrix = collections.defaultdict(                # position
         lambda: collections.defaultdict(             # template_size_bin
@@ -163,23 +197,40 @@ if __name__ == '__main__':
         )
     )
 
-    motifs = list(atactk.data.read_features(args.motifs, args.extension, args.reverse_motif_shift))
+    motif_count = None
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug('Counting motifs...')
+        start = time.time()
+        motif_count = atactk.data.count_features(args.motifs)
+        logger.debug('Motif count: {} (took {} seconds)'.format(motif_count, time.time() - start))
+
+    logger.info('Loading motifs from {}...'.format(args.motifs))
+    motifs = atactk.data.read_features(args.motifs, args.extension, args.reverse_motif_shift)
 
     score = functools.partial(atactk.metrics.score_feature,
                               args.alignments, args.bins,
                               args.include_flags, args.exclude_flags,
                               args.quality,
-                              cut_point_offset=args.cut_point_offset,
-                              verbose=args.verbose)
+                              cut_point_offset=args.cut_point_offset)
 
+    logger.info('Making cut point matrix...')
     try:
         if args.parallel > 1:
             pool = multiprocessing.Pool(processes=args.parallel, initializer=worker_init)
-            results = pool.imap(score, motifs)
+            results = pool.imap(score, motifs, args.parallel)
         else:
-            results = [score(motif) for motif in motifs]
+            results = (score(motif) for motif in motifs)
 
-        for row, tree in results:
+        interval = 1000
+        start = time.time()
+        for i, (row, tree) in enumerate(results):
+            if all([i, logger.isEnabledFor(logging.DEBUG), motif_count is not None, i % interval == 0]):
+                time_elapsed = time.time() - start
+                rate = int(i / time_elapsed)
+                seconds_left = (motif_count - i) / (float(i) / time_elapsed)
+                if rate / 1000 > 1:
+                    interval = rate / 1000 * 1000
+                logger.debug('Motif {} / {}, rate {}/s, should finish in {}'.format(i, motif_count, rate, humanize_time(seconds_left)))
             if args.discrete:
                 print(row)
             elif args.aggregate:
@@ -201,3 +252,5 @@ if __name__ == '__main__':
             for template_size_bin, strands in template_size_bins.items():
                 for strand, count in strands.items():
                     print('%s\t%s\t%s\t%d\t%g' % (position, template_size_bin, strand, count, count / motif_count))
+
+    logger.info('Done in {}'.format(humanize_time(time.time() - job_start)))

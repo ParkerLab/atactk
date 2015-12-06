@@ -181,7 +181,7 @@ def add_cut_points_to_region_tree(region_tree, group_key, strand, cut_points):
                 region_tree[position][group_key][strand] += count
 
 
-def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, quality, feature, cut_point_offset=4, verbose=False):
+def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, quality, feature, cut_point_offset=4):
     """
     Count the number of transposition events around the given feature.
 
@@ -199,8 +199,6 @@ def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, 
         The minimum mapping quality a read must have to be scored.
     feature: ExtendedFeature
         The feature to score.
-    verbose: bool
-        If set, more details will be logged.
 
     Returns
     -------
@@ -224,7 +222,7 @@ def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, 
 
     alignment_file = pysam.AlignmentFile(alignment_filename, 'rb')
     aligned_segments = alignment_file.fetch(feature.reference, max(0, feature.region_start), feature.region_end)
-    aligned_segments = atactk.data.filter_aligned_segments(aligned_segments, include_flags, exclude_flags, quality, verbose)
+    aligned_segments = atactk.data.filter_aligned_segments(aligned_segments, include_flags, exclude_flags, quality)
 
     row = []
     tree = {}
@@ -234,9 +232,9 @@ def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, 
         group_key = '_'.join('%s.%s' % (bin[0], bin[1]) for bin in group)
         for (minimum_length, maximum_length, resolution) in group:
             bin_scores = []
-            aligned_segments_in_bin = [a for a in aligned_segments if minimum_length <= abs(a.isize) <= maximum_length]
-            forward_aligned_segments = [a for a in aligned_segments_in_bin if not a.is_reverse]
-            reverse_aligned_segments = [a for a in aligned_segments_in_bin if a.is_reverse]
+            aligned_segments_in_bin = (a for a in aligned_segments if minimum_length <= abs(a.isize) <= maximum_length)
+            forward_aligned_segments = (a for a in aligned_segments_in_bin if not a.is_reverse)
+            reverse_aligned_segments = (a for a in aligned_segments_in_bin if a.is_reverse)
 
             forward_cut_points = count_cut_points(forward_aligned_segments, feature.region_start, feature.region_end, cut_point_offset)
             reverse_cut_points = count_cut_points(reverse_aligned_segments, feature.region_start, feature.region_end, cut_point_offset)

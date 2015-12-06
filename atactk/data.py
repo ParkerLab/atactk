@@ -191,6 +191,13 @@ def open_maybe_gzipped(filename):
     return f
 
 
+def count_features(filename):
+    count = 0
+    for line in open_maybe_gzipped(filename):
+        count += 1
+    return count
+
+
 def read_features(filename, extension=100, reverse_feature_shift=0, feature_class=ExtendedFeature):
     """Return a generator of :class:`ExtendedFeature` instances from the named BED file.
 
@@ -232,7 +239,7 @@ def read_features(filename, extension=100, reverse_feature_shift=0, feature_clas
         yield feature_class(extension=extension, reverse_feature_shift=reverse_feature_shift, **row)
 
 
-def filter_aligned_segments(aligned_segments, include_flags, exclude_flags, quality, verbose=False):
+def filter_aligned_segments(aligned_segments, include_flags, exclude_flags, quality):
     """
     Filter aligned segments using SAM flags and mapping quality.
 
@@ -246,8 +253,6 @@ def filter_aligned_segments(aligned_segments, include_flags, exclude_flags, qual
         Reads matching any exclude flag will not be returned.
     quality: int
         Only reads with at least this mapping quality will be returned.
-    verbose: bool
-        Be more communicative.
 
     Returns
     -------
