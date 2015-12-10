@@ -14,7 +14,6 @@ from __future__ import print_function
 
 import argparse
 import collections
-import datetime
 import functools
 import logging
 import multiprocessing
@@ -31,7 +30,6 @@ import atactk.metrics
 
 
 LOGGING_FORMAT = '%(asctime)s %(levelname)s %(message)s'
-
 
 def worker_init():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -57,9 +55,7 @@ def humanize_time(seconds):
     return s
 
 
-if __name__ == '__main__':
-    job_start = time.time()
-
+def parse_arguments():
     parser = argparse.ArgumentParser(
         prog='make_cut_matrix',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -170,7 +166,11 @@ if __name__ == '__main__':
     parser.add_argument('alignments', help='The BAM file containing the aligned ATAC-seq reads.')
     parser.add_argument('motifs', help='The BED file containing the motifs.')
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def make_cut_matrix(args):
+    job_start = time.time()
 
     if args.include_flags:
         args.include_flags = sorted(set(args.include_flags))
@@ -207,11 +207,15 @@ if __name__ == '__main__':
     logger.info('Loading motifs from {}...'.format(args.motifs))
     motifs = atactk.data.read_features(args.motifs, args.extension, args.reverse_motif_shift)
 
-    score = functools.partial(atactk.metrics.score_feature,
-                              args.alignments, args.bins,
-                              args.include_flags, args.exclude_flags,
-                              args.quality,
-                              cut_point_offset=args.cut_point_offset)
+    score = functools.partial(
+        atactk.metrics.score_feature,
+        args.alignments,
+        args.bins,
+        args.include_flags,
+        args.exclude_flags,
+        args.quality,
+        args.cut_point_offset
+    )
 
     logger.info('Making cut point matrix...')
     try:
@@ -228,8 +232,8 @@ if __name__ == '__main__':
                 time_elapsed = time.time() - start
                 rate = int(i / time_elapsed)
                 seconds_left = (motif_count - i) / (float(i) / time_elapsed)
-                if rate / 1000 > 1:
-                    interval = rate / 1000 * 1000
+                if rate / interval > 1:
+                    interval = rate / interval * interval
                 logger.debug('Motif {} / {}, rate {}/s, should finish in {}'.format(i, motif_count, rate, humanize_time(seconds_left)))
             if args.discrete:
                 print(row)
@@ -238,19 +242,24 @@ if __name__ == '__main__':
                     for template_size_bin, strands in template_size_bins.items():
                         for strand, count in strands.items():
                             matrix[position][template_size_bin][strand] += count
+        if args.aggregate:
+            motif_count = float(len(motifs))
+
+            print('Position\tBin\tStrand\tCutPointCount\tAverageCutPointCount')
+            for position, template_size_bins in sorted(matrix.items()):
+                for template_size_bin, strands in template_size_bins.items():
+                    for strand, count in strands.items():
+                        print('%s\t%s\t%s\t%d\t%g' % (position, template_size_bin, strand, count, count / motif_count))
+
+        logger.info('Done in {}'.format(humanize_time(time.time() - job_start)))
     except KeyboardInterrupt:
         print('Keyboard interrupt received. Stopping...', file=sys.stderr)
         sys.exit(1)
     except Exception as e:
+        logger.error(e)
         traceback.print_exc(file=sys.stderr)
+        sys.exit()
 
-    if args.aggregate:
-        motif_count = float(len(motifs))
 
-        print('Position\tBin\tStrand\tCutPointCount\tAverageCutPointCount')
-        for position, template_size_bins in sorted(matrix.items()):
-            for template_size_bin, strands in template_size_bins.items():
-                for strand, count in strands.items():
-                    print('%s\t%s\t%s\t%d\t%g' % (position, template_size_bin, strand, count, count / motif_count))
-
-    logger.info('Done in {}'.format(humanize_time(time.time() - job_start)))
+if __name__ == '__main__':
+    make_cut_matrix(parse_arguments())

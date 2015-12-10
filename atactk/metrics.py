@@ -14,8 +14,6 @@ Code for making quantitative observations about ATAC-seq experiments.
 import collections
 import functools
 
-import pysam
-
 import atactk.data
 import atactk.util
 
@@ -181,7 +179,7 @@ def add_cut_points_to_region_tree(region_tree, group_key, strand, cut_points):
                 region_tree[position][group_key][strand] += count
 
 
-def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, quality, feature, cut_point_offset=4):
+def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, quality, cut_point_offset, feature):
     """
     Count the number of transposition events around the given feature.
 
@@ -220,7 +218,8 @@ def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, 
 
     """
 
-    alignment_file = pysam.AlignmentFile(alignment_filename, 'rb')
+    alignment_file = atactk.data.open_alignment_file(alignment_filename)
+
     aligned_segments = alignment_file.fetch(feature.reference, max(0, feature.region_start), feature.region_end)
     aligned_segments = atactk.data.filter_aligned_segments(aligned_segments, include_flags, exclude_flags, quality)
 

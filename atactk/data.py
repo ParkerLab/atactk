@@ -15,7 +15,7 @@ from __future__ import print_function
 
 import csv
 import gzip
-import sys
+import pysam
 
 
 NUCLEOTIDE_COMPLEMENTS = {
@@ -218,7 +218,6 @@ def read_features(filename, extension=100, reverse_feature_shift=0, feature_clas
         An :class:`ExtendedFeature` instance for each row of the BED file.
     """
 
-    mimetype = None
     bed_fieldnames = [
         'reference',
         'start',
@@ -237,6 +236,24 @@ def read_features(filename, extension=100, reverse_feature_shift=0, feature_clas
     reader = csv.DictReader(source, fieldnames=bed_fieldnames, dialect='excel-tab')
     for row in reader:
         yield feature_class(extension=extension, reverse_feature_shift=reverse_feature_shift, **row)
+
+
+ALIGNMENT_FILE_CACHE = {}
+
+
+def open_alignment_file(alignment_filename):
+    if alignment_filename in ALIGNMENT_FILE_CACHE:
+        return ALIGNMENT_FILE_CACHE[alignment_filename]
+
+    alignment_file = pysam.AlignmentFile(alignment_filename, 'rb')
+    try:
+        alignment_file.check_index()
+    except AttributeError:
+        raise AttributeError('The alignments file {} is not in BAM format. Please supply an indexed BAM file.'.format(alignment_filename))
+    except ValueError:
+        raise ValueError('The alignment file {} is not usable. Please supply an indexed BAM file.'.format(alignment_filename))
+    ALIGNMENT_FILE_CACHE[alignment_filename] = alignment_file
+    return alignment_file
 
 
 def filter_aligned_segments(aligned_segments, include_flags, exclude_flags, quality):
@@ -326,7 +343,6 @@ def make_fastq_pair_reader(fastq_file1, fastq_file2):
         record, representing the ID, sequence, comment, and quality lines.
     """
 
-    mimetype = None
     f1 = open_maybe_gzipped(fastq_file1)
     f2 = open_maybe_gzipped(fastq_file2)
     while True:
