@@ -89,7 +89,7 @@ motif.
 
 An `aggregate` matrix contains a row for each combination of position,
 fragment size bin, and strand within and around the motif, with
-columns representing the absolute and average cut point counts at each
+columns representing the absolute and mean cut point counts at each
 position.
 
 An example invocation, using a BED file of bound motifs::

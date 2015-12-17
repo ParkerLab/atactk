@@ -16,6 +16,7 @@ from __future__ import print_function
 import csv
 import gzip
 import pysam
+import sys
 
 
 NUCLEOTIDE_COMPLEMENTS = {
@@ -38,10 +39,6 @@ class ExtendedFeature(object):
     You can define the region by passing the `extension` parameter to the constructor, e.g.::
 
         feature = ExtendedFeature(extension=100, **bed_record)
-
-    You can also move features on the reverse strand upstream with `reverse_feature_shift`::
-
-        feature = ExtendedFeature(extension=100, reverse_feature_shift=1 **bed_record)
 
     Most of :class:`ExtendedFeature`'s attributes map directly to BED
     format fields. Some of them aren't of course used here, but we
@@ -80,7 +77,7 @@ class ExtendedFeature(object):
 
     """
 
-    def __init__(self, reference=None, start=None, end=None, name=None, score=0, strand=None, thick_start=None, thick_end=None, color='0,0,0', block_count=None, block_sizes=None, block_starts=None, extension=100, reverse_feature_shift=0):
+    def __init__(self, reference=None, start=None, end=None, name=None, score=0, strand=None, thick_start=None, thick_end=None, color='0,0,0', block_count=None, block_sizes=None, block_starts=None, extension=100):
 
         # required BED fields
         self.reference = reference
@@ -100,13 +97,9 @@ class ExtendedFeature(object):
 
         # region adjustments
         self.extension = int(extension)
-        self.reverse_feature_shift = reverse_feature_shift
         self.is_reverse = strand == '-'
         self.region_start = self.feature_start - self.extension
         self.region_end = self.feature_end + self.extension
-        if self.is_reverse and reverse_feature_shift > 0:
-            self.region_start -= reverse_feature_shift
-            self.region_end -= reverse_feature_shift
 
     def __str__(self):
         return '\t'.join(str(attribute or '') for attribute in [
@@ -123,9 +116,15 @@ class ExtendedFeature(object):
             self.block_sizes,
             self.block_starts,
             self.extension,
-            self.reverse_feature_shift
         ])
 
+    @property
+    def feature_length(self):
+        return self.feature_end - self.feature_start
+
+    @property
+    def region_length(self):
+        return self.region_end - self.region_start
 
 def complement(seq):
     """
@@ -198,17 +197,15 @@ def count_features(filename):
     return count
 
 
-def read_features(filename, extension=100, reverse_feature_shift=0, feature_class=ExtendedFeature):
+def read_features(filename, extension=100, feature_class=ExtendedFeature):
     """Return a generator of :class:`ExtendedFeature` instances from the named BED file.
 
     Parameters
     ----------
     filename: str
-        The (optionally gzipped) BED file from which to read features.
+        The (optionally gzipped) BED file from which to read features. Use '-' to read from standard input.
     extension: int
         The number of bases to score on either side of each feature.
-    reverse_feature_shift: int
-        If not zero, regions around features on the reverse strand will be shifted upstream by this number of bases.
     feature_class: class
         Each row of the BED file will be instantiated with this class.
 
@@ -232,10 +229,13 @@ def read_features(filename, extension=100, reverse_feature_shift=0, feature_clas
         'block_sizes',
         'block_starts'
     ]
-    source = open_maybe_gzipped(filename)
+    if filename == '-':
+        source = sys.stdin
+    else:
+        source = open_maybe_gzipped(filename)
     reader = csv.DictReader(source, fieldnames=bed_fieldnames, dialect='excel-tab')
     for row in reader:
-        yield feature_class(extension=extension, reverse_feature_shift=reverse_feature_shift, **row)
+        yield feature_class(extension=extension, **row)
 
 
 ALIGNMENT_FILE_CACHE = {}

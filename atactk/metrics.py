@@ -97,9 +97,7 @@ def count_cut_points(aligned_segments, start, end, cut_point_offset=4):
     Return any cut points in the region from the aligned segments.
 
     The cut point is the fifth base of the read, after the transposase
-    integration. This implies of course that any aligned segments shorter than
-    five bases cannot have a cut point and won't be part of the
-    returned values.
+    integration.
 
     Parameters
     ----------
@@ -113,8 +111,8 @@ def count_cut_points(aligned_segments, start, end, cut_point_offset=4):
     Returns
     -------
     list
-        A list of counts, one for each position from `start` to `end`, of cut points in the aligned segments that fell between the `start` and `end`..
-
+        A list of counts, one for each position from `start` to `end`, of cut points in the aligned segments that fell between
+        the `start` and `end`..
     """
 
     cut_points_in_region = []
@@ -167,7 +165,7 @@ def add_cut_points_to_region_tree(region_tree, group_key, strand, cut_points):
     example.
     """
 
-    for position, count in enumerate(cut_points, 0 - int(len(cut_points) / 2)):
+    for position, count in enumerate(cut_points, 0 - (len(cut_points) // 2)):
         if count > 0:
             if position not in region_tree:
                 region_tree[position] = {}
@@ -256,4 +254,4 @@ def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, 
             row.extend(functools.reduce(atactk.util.add_lists, group_rows))
 
     row = '\t'.join(str(score) for score in row)
-    return row, tree
+    return feature, row, tree
