@@ -3,6 +3,20 @@
 History
 =======
 
+0.1.4 (2015-12-17)
+------------------
+
+When generating an aggregate matrix, ensure that there is always a
+line for each position, fragment size bin, and strand, even if there
+is no signal there.
+
+Support reading motifs from standard input, which required removing
+time estimates, and returning the motif from
+atactk.metrics.score_feature.
+
+Remove option for reverse feature shift.
+
+
 0.1.3 (2015-12-10)
 ------------------
 
