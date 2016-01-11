@@ -16,15 +16,18 @@ argv <- commandArgs(TRUE)
 bound_file = argv[1]
 unbound_file = argv[2]
 title = argv[3]
-pdf_name <- argv[4]
+output_filename <- argv[4]
 
 bound = read.delim(file=bound_file, header=TRUE, sep="\t")
 bound$Bound = "Bound"
+bound$Bin <- as.character(bound$Bin)
 
 unbound = read.delim(file=unbound_file, header=TRUE, sep="\t")
 unbound$Bound = "Unbound"
+unbound$Bin <- as.character(unbound$Bin)
 
 df <- rbind(bound, unbound)
+df$Bin <- factor(df$Bin)
 df$Bin <- factor(df$Bin, levels=mixedsort(levels(df$Bin)))
 df$Strand <- as.factor(df$Strand)
 
@@ -42,6 +45,6 @@ p <- p + theme(
 )
 p <- p + scale_fill_brewer(palette="Dark2")
 
-ggsave(p, file=pdf_name, width=11, height=8.5, units="in")
+ggsave(p, file=output_filename, width=11, height=8.5, units="in")
 
-cat(paste("Plot written to", pdf_name, "\n"))
+cat(paste("Plot written to", output_filename, "\n"))

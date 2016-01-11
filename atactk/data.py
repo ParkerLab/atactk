@@ -19,6 +19,15 @@ import pysam
 import sys
 
 
+FEATURE_FIELDNAMES = [
+    'reference',
+    'start',
+    'end',
+    'name',
+    'score',
+    'strand',
+]
+
 NUCLEOTIDE_COMPLEMENTS = {
     "A": "T",
     "C": "G",
@@ -34,18 +43,17 @@ NUCLEOTIDE_COMPLEMENTS = {
 
 
 class ExtendedFeature(object):
-    """A feature plus a fixed extended region, usually read from a BED file.
+    """
+    A feature plus a fixed extended region.
 
     You can define the region by passing the `extension` parameter to the constructor, e.g.::
 
         feature = ExtendedFeature(extension=100, **bed_record)
 
-    Most of :class:`ExtendedFeature`'s attributes map directly to BED
-    format fields. Some of them aren't of course used here, but we
-    accept them when parsing input files. Where our names for the
-    fields differ, the name in the BED format description at
-    https://genome.ucsc.edu/FAQ/FAQformat.html is included in
-    parentheses below.
+    Most of :class:`ExtendedFeature`'s attributes map to the first six
+    fields in a BED file. Where our names for the fields differ, the
+    BED format name from https://genome.ucsc.edu/FAQ/FAQformat.html is
+    included in parentheses below.
 
     Attributes
     ----------
@@ -62,22 +70,9 @@ class ExtendedFeature(object):
         A numeric score.
     strand: str
         Either ``+`` or ``-``.
-    thick_start: int
-        The starting position at which the feature would be drawn thickly. (``thickStart``)
-    thick_end: int
-        The ending position at which the feature would be drawn thickly. (``thickEnd``)
-    color: str
-        A string representing the RGB color with which the feature would be drawn. (``itemRgb``)
-    block_count: int
-        The number of blocks in the feature. (``blockCount``)
-    block_sizes: str
-        A comma-separated list of the sizes of blocks. (``blockSizes``)
-    block_starts: str
-        A comma-separated list of the starting positions of blocks, relative to the start of the feature. (``blockStarts``)
-
     """
 
-    def __init__(self, reference=None, start=None, end=None, name=None, score=0, strand=None, thick_start=None, thick_end=None, color='0,0,0', block_count=None, block_sizes=None, block_starts=None, extension=100):
+    def __init__(self, reference=None, start=None, end=None, name=None, score=0, strand=None, extension=100):
 
         # required BED fields
         self.reference = reference
@@ -88,12 +83,6 @@ class ExtendedFeature(object):
         self.name = name
         self.score = float(score)
         self.strand = strand
-        self.thick_start = thick_start
-        self.thick_end = thick_end
-        self.color = color
-        self.block_count = block_count
-        self.block_sizes = block_sizes
-        self.block_starts = block_starts
 
         # region adjustments
         self.extension = int(extension)
@@ -109,12 +98,6 @@ class ExtendedFeature(object):
             self.name,
             self.score,
             self.strand,
-            self.thick_start,
-            self.thick_end,
-            self.color,
-            self.block_count,
-            self.block_sizes,
-            self.block_starts,
             self.extension,
         ])
 
@@ -198,43 +181,35 @@ def count_features(filename):
 
 
 def read_features(filename, extension=100, feature_class=ExtendedFeature):
-    """Return a generator of :class:`ExtendedFeature` instances from the named BED file.
+    """
+    Return a generator of :class:`ExtendedFeature` instances from the named tab-separated value file.
+
+    Most BED-like files should work; we read the three required and
+    first three optional BED fields to get coordinates, and any extra
+    fields are ignored.
 
     Parameters
     ----------
     filename: str
-        The (optionally gzipped) BED file from which to read features. Use '-' to read from standard input.
+        The (optionally gzipped) tab-separated value file from which to read features. Use '-' to read from standard input.
     extension: int
         The number of bases to score on either side of each feature.
     feature_class: class
-        Each row of the BED file will be instantiated with this class.
+        Each row of the file will be instantiated with this class.
 
     Yields
     ------
     feature
-        An :class:`ExtendedFeature` instance for each row of the BED file.
+        An :class:`ExtendedFeature` instance for each row of the file.
     """
 
-    bed_fieldnames = [
-        'reference',
-        'start',
-        'end',
-        'name',
-        'score',
-        'strand',
-        'thick_start',
-        'thick_end',
-        'color',
-        'block_count',
-        'block_sizes',
-        'block_starts'
-    ]
     if filename == '-':
         source = sys.stdin
     else:
         source = open_maybe_gzipped(filename)
-    reader = csv.DictReader(source, fieldnames=bed_fieldnames, dialect='excel-tab')
+    reader = csv.DictReader(source, fieldnames=FEATURE_FIELDNAMES, restkey='extra_fields', dialect='excel-tab')
     for row in reader:
+        del row['extra_fields']
         yield feature_class(extension=extension, **row)
 
 

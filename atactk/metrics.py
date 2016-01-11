@@ -96,9 +96,6 @@ def count_cut_points(aligned_segments, start, end, cut_point_offset=4):
     """
     Return any cut points in the region from the aligned segments.
 
-    The cut point is the fifth base of the read, after the transposase
-    integration.
-
     Parameters
     ----------
     aligned_segments: list
@@ -226,17 +223,18 @@ def score_feature(alignment_filename, bin_groups, include_flags, exclude_flags, 
 
     for group in bin_groups:
         group_rows = []
-        group_key = '_'.join('%s.%s' % (bin[0], bin[1]) for bin in group)
+        group_key = ','.join('%s_%s' % (bin[0], bin[1]) for bin in group)
         for (minimum_length, maximum_length, resolution) in group:
             bin_scores = []
-            aligned_segments_in_bin = (a for a in aligned_segments if minimum_length <= abs(a.isize) <= maximum_length)
-            forward_aligned_segments = (a for a in aligned_segments_in_bin if not a.is_reverse)
-            reverse_aligned_segments = (a for a in aligned_segments_in_bin if a.is_reverse)
+            aligned_segments_in_bin = [a for a in aligned_segments if minimum_length <= abs(a.isize) <= maximum_length]
+            forward_aligned_segments = [a for a in aligned_segments_in_bin if not a.is_reverse]
+            reverse_aligned_segments = [a for a in aligned_segments_in_bin if a.is_reverse]
 
             forward_cut_points = count_cut_points(forward_aligned_segments, feature.region_start, feature.region_end, cut_point_offset)
             reverse_cut_points = count_cut_points(reverse_aligned_segments, feature.region_start, feature.region_end, cut_point_offset)
 
             if feature.is_reverse:
+                # need to orient the cut point positions to the motif in the matrix
                 forward_cut_points, reverse_cut_points = list(reversed(reverse_cut_points)), list(reversed(forward_cut_points))
 
             # for the discrete matrix: scores for each feature

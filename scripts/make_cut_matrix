@@ -118,6 +118,24 @@ def parse_arguments():
         ---- --------- ----
         9 21 9 2 0 2 7 21 9
 
+        INPUT
+        =====
+
+        BAM files just work.
+
+        BED files mean different things to different people. We
+        require a file of tab-separated values, where the first six
+        fields (and their labels in the BED format documentation at
+        https://genome.ucsc.edu/FAQ/FAQformat.html) are:
+
+        1. The reference sequence name ('chrom'): text
+        2. The feature start position ('chromStart'): integer
+        3. The feature end position ('chromEnd'): integer
+        4. The name of the feature ('name'): text
+        5. The feature's score ('score'): number
+        6. The feature's strand ('strand'): '+' or '-'
+
+        Extra fields are ignored.
 
         OUTPUT
         ======
@@ -225,7 +243,7 @@ def make_cut_matrix(args):
 
                 for position in range(min_position, max_position):
                     for bin_group in args.bins:
-                        bin_key = '_'.join('%s.%s' % (bin[0], bin[1]) for bin in bin_group)
+                        bin_key = ','.join('%s_%s' % (bin[0], bin[1]) for bin in bin_group)
                         for strand in ('F', 'R'):
                             if position in tree and bin_key in tree[position]:
                                 count = tree[position][bin_key].get(strand, 0)
@@ -241,7 +259,7 @@ def make_cut_matrix(args):
             motif_count = float(motif_count)
             print('Position\tBin\tStrand\tCutPointCount\tMeanCutPointCount')
             for position, template_size_bins in sorted(matrix.items()):
-                for template_size_bin, strands in sorted(template_size_bins.items(), key=lambda item: int(item[0].split('.')[0])):
+                for template_size_bin, strands in sorted(template_size_bins.items(), key=lambda item: int(item[0].split('_')[0])):
                     for strand, count in sorted(strands.items()):
                         print('%s\t%s\t%s\t%d\t%.3f' % (position, template_size_bin, strand, count, count / motif_count))
 

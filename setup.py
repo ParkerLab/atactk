@@ -20,7 +20,7 @@ test_requirements = []
 
 setup(
     name='atactk',
-    version='0.1.4',
+    version='0.1.5',
     description="A toolkit for working with ATAC-seq data.",
     long_description=readme + '\n\n',
     author="The Parker Lab",
@@ -29,7 +29,8 @@ setup(
     packages=['atactk', ],
     scripts=[
         'scripts/make_cut_matrix',
-        'scripts/trim_adapters'
+        'scripts/trim_adapters',
+        'scripts/plot_aggregate_matrix.R'
     ],
     include_package_data=True,
     install_requires=requirements,

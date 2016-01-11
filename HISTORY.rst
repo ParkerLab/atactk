@@ -3,6 +3,21 @@
 History
 =======
 
+0.1.5 (2016-01-08)
+------------------
+
+Fix bug in score_feature introduced in 0.1.2: careless use of a
+generator expression caused aligned_segments_in_bin to be consumed
+when gathering forward_aligned_segments, so reverse_aligned_segments
+was always empty, resulting in low cut point counts.
+
+Change bin key construction to ensure the R script treated bins as
+characters.
+
+Stop insisting motif input files match an official BED format; as long
+as the first six fields work, ignore the rest and get on with it.
+
+
 0.1.4 (2015-12-17)
 ------------------
 
