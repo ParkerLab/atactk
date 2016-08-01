@@ -209,7 +209,8 @@ def read_features(filename, extension=100, feature_class=ExtendedFeature):
         source = open_maybe_gzipped(filename)
     reader = csv.DictReader(source, fieldnames=FEATURE_FIELDNAMES, restkey='extra_fields', dialect='excel-tab')
     for row in reader:
-        del row['extra_fields']
+        if 'extra_fields' in row:
+            del row['extra_fields']
         yield feature_class(extension=extension, **row)
 
 
