@@ -82,15 +82,15 @@ Aggregate matrices
 
 After you've run CENTIPEDE with the resulting `discrete` matrix, and
 identified bound and unbound motifs (perhaps using posterior
-probabilities of at least 0.95 or at most 0.5, respectively), you can
+probabilities of at least 0.99 or at most 0.5, respectively), you can
 move on to generating what we call `aggregate` matrices.  These are
 designed for creating a plot of the ATAC-seq signal around a single
 motif.
 
 An `aggregate` matrix contains a row for each combination of position,
 fragment size bin, and strand within and around the motif, with
-columns representing the absolute and mean cut point counts at each
-position.
+columns representing the absolute count and count divided by the
+number of total motifs at each position.
 
 An example invocation, using a BED file of bound motifs::
 
@@ -127,7 +127,7 @@ this::
   make_cut_matrix -a -b '(36-149 1) (150-224 225-324 2) (325-400 5)' ...
 
 Pretend you're scoring a motif 5 bases long, with a 10-base extended
-region on either side, and for simplicity, pretend that each template
+region on either side, and for simplicity, pretend that each fragment
 length bin had the same counts of cut points around the motif, shown
 here::
 

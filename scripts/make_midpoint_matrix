@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 #
-# make_cut_matrix: Given a BAM file containing alignments from an
+# make_midpoint_matrix: Given a BAM file containing alignments from an
 # ATAC-seq experiment and a BED file of motifs, creates a matrix of the
-# transposition cuts around the motifs.
+# fragment midpoints around the motifs.
 #
 # Copyright 2015 Stephen Parker
 #
@@ -13,8 +13,12 @@
 from __future__ import print_function
 
 import argparse
+import collections
 import decimal
+import functools
 import logging
+import multiprocessing
+import multiprocessing.managers
 import os
 import signal
 import sys
@@ -25,33 +29,32 @@ import traceback
 import atactk.command
 import atactk.data
 import atactk.metrics
-import atactk.metrics.cut
+import atactk.metrics.mid
 import atactk.util
 
 
 LOGGING_FORMAT = '%(levelname)s %(message)s'
 
 
+def worker_init():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        prog='make_cut_matrix',
+        prog='make_midpoint_matrix',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""
 
-        Given an indexed BAM file containing alignments from an
-        ATAC-seq experiment and a BED file of motifs, creates a matrix
-        of counts of the transposition integration events (cuts)
-        around the motifs.
+        Given a BAM file containing alignments from an ATAC-seq
+        experiment and a BED file of motifs, creates a matrix of
+        counts of the fragment midpoints around the motifs.
 
         BINNING
         =======
 
-        If fragment size bins are not specified with the --bins argument, each
-        column in the matrix will represent the total number of cut points at that
-        position in the extended region around the motif.
-
-        If bins are specified, the matrix will contain a column for each position in
-        the extended region, for each fragment size bin, and each strand.
+        Each motif in the BED file is scored for each of the given
+        fragment length bins.
 
         {}
 
@@ -60,9 +63,10 @@ def parse_arguments():
 
         BAM files just work.
 
-        BED files mean different things to different people. We require a file of
-        tab-separated values, where the first six fields (and their labels in the
-        BED format documentation at https://genome.ucsc.edu/FAQ/FAQformat.html) are:
+        BED files mean different things to different people. We
+        require a file of tab-separated values, where the first six
+        fields (and their labels in the BED format documentation at
+        https://genome.ucsc.edu/FAQ/FAQformat.html) are:
 
         1. The reference sequence name ('chrom'): text
         2. The feature start position ('chromStart'): integer
@@ -76,27 +80,29 @@ def parse_arguments():
         OUTPUT
         ======
 
-        You can request either discrete or aggregate output. Discrete output is
-        intended to be usable as input to CENTIPEDE. After you've run CENTIPEDE, you
-        can feed different parts of the resulting BED file back into this script and
-        request aggregate output to produce a file suitable for
-        plot_aggregate_matrix.R.  As an example, we like to extract from the
-        CENTIPEDE output all motifs with a posterior probability of binding greater
-        than 0.99, and a random sampling of motifs with a posterior probability of
-        less than 0.5. Plotting those provides a good visual inspection of the
-        results.
+        You can request either discrete or aggregate output. Discrete
+        output is intended to be usable as input to CENTIPEDE. After
+        you've run CENTIPEDE, you can feed different parts of the
+        resulting BED file back into this script and request aggregate
+        output to produce a file suitable for plotting with one of our
+        R scripts. As an example, we like to extract from the CENTIPEDE
+        output all motifs with a posterior probability of binding greater
+        than 0.99, and a random sampling of motifs with a posterior
+        probability of less than 0.5. Plotting those provides a good
+        visual inspection of the results.
 
-        Each row of the discrete matrix represents the scores around a single motif
-        from your input BED file. The positions reported depend on the resolution
-        specified in the --bins argument. For example, specifying a resolution of 1
-        will result in single nucleotide resolution -- you'll get the score at each
-        position in the extended region around the motif. Specifying 10 will report
-        the sum of every 10 positions.
+        Each row of the discrete matrix represents the scores around a
+        single motif from your input BED file. The positions reported
+        depend on the resolution specified in the --bins argument. For
+        example, specifying a resolution of 1 will result in single
+        nucleotide resolution -- you'll get the score at each position
+        in the extended region around the motif. Specifying 10 will
+        report the sum of every 10 positions.
 
-        Aggregate output includes absolute counts and counts divided by the number
-        of motifs for all of your motifs at each position in the region around the
-        motif, for each fragment size bin represented at that position, on each
-        strand.
+        Aggregate output reports absolute counts and counts divided by
+        the number of motifs for all of your motifs at each position
+        in the region around the motif, for each fragment size bin
+        represented at that position.
 
         \0""".format('\n    '.join(atactk.command.parse_bins.__doc__.split('\n')[3:]).lstrip()))
     )
@@ -104,10 +110,9 @@ def parse_arguments():
     group.add_argument('-a', '--aggregate-output', dest='aggregate', action='store_true', help='Requests an aggregate matrix. See OUTPUT, below.')
     group.add_argument('-d', '--discrete-output', dest='discrete', action='store_true', help='Requests a discrete matrix. See OUTPUT, below.')
 
-    parser.add_argument('-b', '--bins', dest='bins', default=[], type=atactk.command.parse_bins, help='A list of fragment size bin groups and their resolutions. See BINNING, below.')
+    parser.add_argument('-b', '--bins', dest='bins', type=atactk.command.parse_bins, required=True, help='A list of fragment size bin groups and their resolutions. See BINNING, below.')
     parser.add_argument('-F', '--exclude-flags', type=int, dest='exclude_flags', action='append', help='A SAM flag used to exclude alignments from the BAM file. More than one may be specified. Alignments matching any exclude flag will not be counted. The default is to exclude all unmapped reads/mates by filtering out any alignments with SAM flags 4 or 8 set.')
     parser.add_argument('-f', '--include-flags', type=int, dest='include_flags', action='append', help='A SAM flag that determines which alignments from the BAM file will be included in the counts. More than one may be specified. Any alignment matching any include flag will be counted. The default is to include properly paired and mapped reads by filtering for SAM flags 83, 99, 147, or 163.')
-    parser.add_argument('-o', '--cut-point-offset', type=int, default=4, dest='cut_point_offset', help='The position of cut points relative to the beginning of a read and in the direction toward the read end, as a number of bases (default: 4).')
     parser.add_argument('-p', '--parallel', type=int, default=1, dest='parallel', help='The number of parallel scoring processes to use (default: 1).')
     parser.add_argument('-q', '--quality', type=int, default=30, dest='quality', help='The minimum mapping quality required for a read to be counted (default: 30).')
     parser.add_argument('-r', '--region-extension', type=int, default=100, dest='extension', help='The number of bases to score on either side of the motifs (default: 100).')
@@ -128,43 +133,33 @@ def print_discrete_matrix(scored_motifs):
 
 
 def print_aggregate_matrix(scored_motifs, aggregate_positions, bins):
-    strands = ('F', 'R')
+    matrix = collections.defaultdict(            # position
+        lambda: collections.defaultdict(int)     # fragment size bin
+    )
+    motif_count = 0
 
-    if not bins:
-        bins = [[('All', None, None)]]
-        strands = ['Both']
-
-    matrix = {}
-    for position in aggregate_positions:
-        matrix[position] = {}
-        for bin_group in bins:
-            bin_group_key = atactk.util.make_bin_group_key(bin_group)
-            matrix[position][bin_group_key] = {}
-            for strand in strands:
-                matrix[position][bin_group_key][strand] = 0
-
-    for motif_count, scored_motif in enumerate(scored_motifs, 1):
-        motif, row, tree = scored_motif
-        for position in tree.keys():
-            for bin_group_key in tree[position].keys():
-                for strand in strands:
-                    try:
-                        count = tree[position][bin_group_key][strand]
-                        matrix[position][bin_group_key][strand] += count
-                    except KeyError:
-                        pass  # no count to add
+    # since the tree returned from atactk.metrics.mid.score_feature_with_midpoints is sparse, but we want to print a row for every
+    # position in the extended region around the motif, we can't just iterate tree.items()
+    for motif_count, (motif, row, tree) in enumerate(scored_motifs, 1):
+        for position in aggregate_positions:
+            for bin_group in bins:
+                group_key = atactk.util.make_bin_group_key(bin_group)
+                if position in tree:
+                    count = tree[position].get(group_key, 0)
+                else:
+                    count = 0
+                matrix[position][group_key] += count
 
     decimal_motif_count = decimal.Decimal(motif_count)
-    print('Position\tFragmentSizeBin\tStrand\tCutPointCount\tCutPointCountFraction')
+    print('Position\tFragmentSizeBin\tMidpointCount\tMidpointCountFraction')
     for position, fragment_size_bins in sorted(matrix.items()):
-        for fragment_size_bin, strands in sorted(fragment_size_bins.items(), key=lambda item: '_' in item and int(item[0].split('_')[0])):
-            for strand, count in sorted(strands.items()):
-                print('{}\t{}\t{}\t{:d}\t{}'.format(position, fragment_size_bin, strand, count, count / decimal_motif_count))
+        for fragment_size_bin, count in sorted(fragment_size_bins.items(), key=lambda item: int(item[0].split('_')[0])):
+            print('{}\t{}\t{:d}\t{}'.format(position, fragment_size_bin, count, count / decimal_motif_count))
 
     return motif_count
 
 
-def make_cut_matrix(args):
+def make_midpoint_matrix(args):
     job_start = time.time()
 
     if args.include_flags:
@@ -179,25 +174,29 @@ def make_cut_matrix(args):
 
     if args.parallel > 1:
         logger.info('Using {:d} concurrent scoring processes'.format(args.parallel))
-
     logger.info('Filtering alignments for quality >= {}, with flags {} and without flags {}'.format(args.quality, args.include_flags, args.exclude_flags))
-    if args.bins:
-        logger.info('Using these fragment size bins: {}'.format(args.bins))
+    logger.info('Using these fragment size bins: {}'.format(args.bins))
     logger.info('Reading motifs from {}...'.format(args.motifs == '-' and 'standard input' or args.motifs))
 
     motifs = atactk.data.read_features(args.motifs, args.extension)
 
-    if args.verbose:
-        logging.debug('Memory in use after loading motifs: {}'.format(atactk.util.memory_in_use()))
-
     motif_count = 0
+    score = functools.partial(
+        atactk.metrics.mid.score_feature_with_midpoints,
+        args.alignments,
+        args.bins,
+        args.include_flags,
+        args.exclude_flags,
+        args.quality,
+    )
 
-    aggregate_positions = range(0 - args.extension, args.extension + 1)
+    aggregate_positions = range(0 - args.extension, args.extension)
     pool = None
 
     try:
-        logger.info('Making {} cut point matrix...'.format(args.discrete and 'discrete' or 'aggregate'))
-        scored_motifs = atactk.metrics.cut.score_features_with_cut_points(args.alignments, args.bins, args.include_flags, args.exclude_flags, args.quality, args.cut_point_offset, motifs, args.parallel)
+        logger.info('Making {} midpoint matrix...'.format(args.discrete and 'discrete' or 'aggregate'))
+        pool = multiprocessing.Pool(processes=args.parallel, initializer=worker_init)
+        scored_motifs = pool.imap(score, motifs, args.parallel)
 
         if args.discrete:
             motif_count = print_discrete_matrix(scored_motifs)
@@ -205,10 +204,10 @@ def make_cut_matrix(args):
             motif_count = print_aggregate_matrix(scored_motifs, aggregate_positions, args.bins)
 
         if not motif_count:
-            logger.warn("""No motifs were found in the BED input. Make sure it is in the format\nspecified in this program's help and at https://genome.ucsc.edu/FAQ/FAQformat.html.""")
+            logger.warn('No motifs were found in the BED input.')
 
         if args.verbose:
-            logging.debug('Memory in use at end: {}'.format(atactk.util.memory_in_use()))
+            logging.debug('Memory in use: {}'.format(atactk.util.memory_in_use()))
 
         logger.info('Processed {:.0f} feature{} in {}'.format(motif_count, motif_count == 1 and '' or 's', atactk.util.humanize_time(time.time() - job_start)))
     except KeyboardInterrupt:
@@ -228,7 +227,6 @@ def make_cut_matrix(args):
         sys.exit(1)
     except Exception as e:
         logger.error(e)
-        logger.info("""Check your input files. Make sure the BED file of motifs is in the proper format,\nas specified in this program's help and at https://genome.ucsc.edu/FAQ/FAQformat.html.""")
         if args.verbose:
             traceback.print_exc(file=sys.stderr)
         sys.exit(1)
@@ -239,9 +237,9 @@ if __name__ == '__main__':
 
     loglevel = args.verbose and logging.DEBUG or logging.INFO
     logging.basicConfig(level=loglevel, format=LOGGING_FORMAT)
-    logger = logging.getLogger('make_cut_matrix')
+    logger = logging.getLogger('make_midpoint_matrix')
 
     bins = sorted([b for bins in args.bins for b in bins])
     atactk.command.check_bin_resolutions(bins, args.extension)
 
-    make_cut_matrix(args)
+    make_midpoint_matrix(args)

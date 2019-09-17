@@ -1,0 +1,143 @@
+#!/usr/bin/env python
+
+#
+# measure_features: Get coverage statistics for features
+#
+
+from __future__ import print_function
+
+import argparse
+import csv
+import errno
+import functools
+import logging
+import math
+import multiprocessing
+import multiprocessing.managers
+import signal
+import sys
+import textwrap
+
+import pyBigWig
+
+import atactk.data
+
+
+STAT_CHOICES = [
+    'coverage',
+    'max',
+    'mean',
+    'median',
+    'min',
+    'std',
+]
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description=textwrap.dedent("""
+
+        Given a bigWig file containing coverage counts and a BED file of features,
+        calculates a requested statistic for each feature.
+
+        """) + '\n\n'
+        )
+
+    parser.add_argument('-n', '--null-value', default='NA', dest='nullvalue', help="""The string to record for features that cannot be scored for some reason (usually because the bigWig has no data in their regions).""")
+    parser.add_argument('-p', '--parallel', type=int, default=1, dest='parallel', help='The number of parallel scoring processes to use (default: 1).')
+    parser.add_argument('-s', '--statistic', default='mean', choices=STAT_CHOICES, help='The statistic to calculate for each feature.')
+    parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Requests more detailed output.')
+
+    parser.add_argument('coverage', help='The bigWig file containing coverage counts.')
+    parser.add_argument('features', default='-', help='The BED file containing the feature data. Omit or use "-" to read from stdin.')
+
+    return parser.parse_args()
+
+
+def clean_measurement(m, nullvalue):
+    result = m
+    try:
+        if math.isnan(m):
+            result = nullvalue
+    except:
+        result = nullvalue
+
+    return result
+
+
+def measure_feature(coverage_file, statistic, nullvalue, feature):
+    bw = pyBigWig.open(coverage_file)
+
+    measurement = None
+    measured = False
+    try:
+        if statistic == 'median':
+            values = sorted(bw.values(feature[0], int(feature[1]), int(feature[2])))
+            count = len(values)
+            if count == 0:
+                measurement = 0
+            elif count % 2 == 0:
+                measurement = (values[count / 2 - 1] + values[count / 2]) / 2
+            else:
+                measurement = values[count / 2]
+            try:
+                measurement = [int(measurement)]
+            except:
+                measurement = [measurement]
+        else:
+            measurement = bw.stats(feature[0], int(feature[1]), int(feature[2]), type=statistic, exact=True)
+
+        measurement = [clean_measurement(m, nullvalue) for m in measurement]
+
+        measured = True
+    except RuntimeError as e:
+        logging.error('Error measuring {} for feature {}:{}-{} -- {}'.format(statistic, feature[0], feature[1], feature[2], e))
+        measurement = [nullvalue]
+
+    return feature + measurement, measured
+
+
+def worker_init():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+if __name__ == '__main__':
+    args = parse_arguments()
+
+    loglevel = args.verbose and logging.DEBUG or logging.INFO
+    logging.basicConfig(level=loglevel, format='%(message)s')
+
+    if args.features == '-':
+        feature_source = sys.stdin
+    else:
+        feature_source = atactk.data.open_maybe_gzipped(args.features)
+
+    features = csv.reader(feature_source, dialect='excel-tab')
+
+    score = functools.partial(
+        measure_feature,
+        args.coverage,
+        args.statistic,
+        args.nullvalue
+    )
+
+    if args.parallel > 1:
+        print('Using {} parallel processes'.format(args.parallel),  file=sys.stderr)
+        pool = multiprocessing.Pool(processes=args.parallel, initializer=worker_init)
+        scored_features = pool.imap(score, features, args.parallel)
+    else:
+        scored_features = (score(feature) for feature in features)
+
+    errors = False
+    try:
+        for feature, measured in scored_features:
+            print('\t'.join(str(t) for t in feature))
+            if not measured:
+                errors = True
+        if errors:
+            print('Some features could not be measured, probably because the bigWig file lacked data in their regions.', file=sys.stderr)
+
+    except IOError as e:
+        if e.errno != errno.EPIPE:
+            print('Error: {}'.format(e), file=sys.stderr)

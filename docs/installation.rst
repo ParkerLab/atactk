@@ -12,8 +12,7 @@ The dependencies should be installed automatically.
 Requirements
 ------------
 
-* Python. We've run it successfully under versions 2.7.10 and 3.4.3.
+* Python. We've run it successfully under versions 2.7.10 and 3.5.
 * pysam
 * python-levenshtein
 * sexpdata
-

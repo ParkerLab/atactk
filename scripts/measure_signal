@@ -1,0 +1,201 @@
+#!/usr/bin/env python
+
+#
+# measure_signal: Given a BAM file containing alignments from an
+# ATAC-seq experiment and a BED file of features, creates a
+# tab-separated value file containing for each feature, a line with
+# each overlapping fragment's size and position relative to the
+# feature.
+#
+# Copyright 2015 Stephen Parker
+#
+# Licensed under Version 3 of the GPL or any later version
+#
+
+from __future__ import print_function
+
+import argparse
+import functools
+import logging
+import multiprocessing
+import os
+import random
+import signal
+import sys
+import time
+import textwrap
+import traceback
+
+import atactk.command
+import atactk.data
+import atactk.metrics
+import atactk.metrics.mid
+import atactk.util
+
+
+LOGGING_FORMAT = '%(levelname)s %(message)s'
+
+
+def worker_init():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        prog='measure_signal',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent("""
+
+        Given a BAM file containing alignments from an ATAC-seq experiment and a
+        BED file of features, measures ATAC-seq reads around each feature.
+
+        INPUT
+        =====
+
+        BAM files just work.
+
+        BED files mean different things to different people. We
+        require a file of tab-separated values, where the first six
+        fields (and their labels in the BED format documentation at
+        https://genome.ucsc.edu/FAQ/FAQformat.html) are:
+
+        1. The reference sequence name ('chrom'): text
+        2. The feature start position ('chromStart'): integer
+        3. The feature end position ('chromEnd'): integer
+        4. The name of the feature ('name'): text
+        5. The feature's score ('score'): number
+        6. The feature's strand ('strand'): '+' or '-'
+
+        Extra fields are ignored.
+
+        OUTPUT
+        ======
+
+        A tab-separated value file containing a line for each fragment overlapping
+        any feature's region. Each line contains three columns:
+
+        FeatureMidpoint: the absolute position of the feature's midpoint
+
+        FragmentMidpoint: the absolute position of the fragment midpoint
+
+        FragmentMidpointDistanceToFeatureMidpoint: the distance in
+        nucleotides between the fragment and feature midpoints
+
+        FragmentSize: the length of the fragment (template length or
+        insert size in SAM terminology)
+
+        FragmentPositionRelativeToFeatureMidpoint: if a fragment's cut
+        points both map upstream of the feature's midpoint, it's 'L' for
+        'left'; if both map downstream of the feature's midpoint, it's
+        'R' for 'right'; if one cut point maps to each side of the
+        midpoint, it's 'O' for 'overlapping'.
+
+        \0""".format('\n    '.join(atactk.command.parse_bins.__doc__.split('\n')[3:]).lstrip()))
+    )
+
+    parser.add_argument('-F', '--exclude-flags', type=int, dest='exclude_flags', action='append', help='A SAM flag used to exclude alignments from the BAM file. More than one may be specified. Alignments matching any exclude flag will not be counted. The default is to exclude all unmapped reads/mates by filtering out any alignments with SAM flags 4 or 8 set.')
+    parser.add_argument('-f', '--include-flags', type=int, dest='include_flags', action='append', help='A SAM flag that determines which alignments from the BAM file will be included in the counts. More than one may be specified. Any alignment matching any include flag will be counted. The default is to include properly paired and mapped reads by filtering for SAM flags 83, 99, 147, or 163.')
+    parser.add_argument('-o', '--cut-point-offset', type=int, default=4, dest='cut_point_offset', help='The position of cut points relative to the beginning of a read and in the direction toward the read end, as a number of bases (default: 4).')
+    parser.add_argument('-p', '--parallel', type=int, default=1, dest='parallel', help='The number of parallel scoring processes to use (default: 1).')
+    parser.add_argument('-q', '--quality', type=int, default=30, dest='quality', help='The minimum mapping quality required for a read to be counted (default: 30).')
+    parser.add_argument('-r', '--region-extension', type=int, default=100, dest='extension', help='The number of bases to score on either side of the features (default: 100).')
+    parser.add_argument('-s', '--sample', type=int, default=None, help='Only measure a random sample of this many features from the input file.')
+    parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Requests more detailed output.')
+    parser.add_argument('--version', action='version', version='%(prog)s {}'.format(atactk.__version__))
+
+    parser.add_argument('alignments', metavar='BAM-file-of-aligned-reads', help='The indexed BAM file containing the aligned ATAC-seq reads.')
+    parser.add_argument('features', metavar='BED-file-of-features', help='The BED file containing the features. Use "-" to read from standard input.')
+
+    return parser.parse_args()
+
+
+def measure_signal(args):
+    job_start = time.time()
+
+    if args.include_flags:
+        args.include_flags = sorted(set(args.include_flags))
+    else:
+        args.include_flags = [83, 99, 147, 163]
+
+    if args.exclude_flags:
+        args.exclude_flags = sorted(set(args.exclude_flags))
+    else:
+        args.exclude_flags = [4, 8]
+
+    if args.parallel > 1:
+        logger.info('Using {:d} concurrent scoring processes'.format(args.parallel))
+
+    logger.info('Filtering alignments for quality >= {}, with flags {} and without flags {}'.format(args.quality, args.include_flags, args.exclude_flags))
+    logger.info('Reading features from {}...'.format(args.features == '-' and 'standard input' or args.features))
+
+    features = atactk.data.read_features(args.features, args.extension)
+
+    if args.sample:
+        features = list(features)
+        total_feature_count = len(features)
+        features = random.sample(features, args.sample)
+        sample_count = len(features)
+        logger.info('Using a sample of {:d} feature{} from the total of {:d}'.format(sample_count, sample_count == 1 and '' or 's',  total_feature_count))
+
+    feature_count = 0
+    finder = functools.partial(
+        atactk.metrics.mid.find_midpoints_around_feature,
+        args.alignments,
+        args.include_flags,
+        args.exclude_flags,
+        args.quality,
+        args.cut_point_offset
+    )
+
+    pool = None
+
+    try:
+        logger.info('Finding fragment midpoints...')
+        if args.parallel > 1:
+            pool = multiprocessing.Pool(processes=args.parallel, initializer=worker_init)
+            midpoint_lists = pool.imap(finder, features, args.parallel)
+        else:
+            midpoint_lists = (finder(feature) for feature in features)
+
+        print('FeatureMidpoint\tFragmentMidpoint\tFragmentMidpointDistanceToFeatureMidpoint\tFragmentSize\tFragmentPositionRelativeToFeatureMidpoint\tFeatureNumber')
+        for feature_count, midpoint_list in enumerate(midpoint_lists, 1):
+            for feature_midpoint, fragment_midpoint, distance, fragment_size, fragment_position in midpoint_list:
+                print('{:d}\t{:d}\t{:d}\t{:d}\t{}\t{}'.format(feature_midpoint, fragment_midpoint, distance, fragment_size, fragment_position, feature_count))
+
+        if not feature_count:
+            logger.warn('No features were found in the BED input.')
+
+        if args.verbose:
+            logging.debug('Memory in use: {}'.format(atactk.util.memory_in_use()))
+
+        logger.info('Processed {:.0f} feature{} in {}'.format(feature_count, feature_count == 1 and '' or 's', atactk.util.humanize_time(time.time() - job_start)))
+    except KeyboardInterrupt:
+        logger.info('Keyboard interrupt received in process {}.'.format(os.getpid()))
+
+        if pool:
+            if sys.version_info.major < 3:
+                logger.warn('Interrupt handling in multiprocessing programs is not reliable before Python 3, so I may have to exit without cleaning up all worker processes. Sorry.')
+                signal.signal(signal.SIGALRM, atactk.util.exit_forcefully)
+                signal.alarm(10)
+
+            logger.info('Telling worker processes to terminate...')
+            pool.terminate()
+            logger.info('Waiting for worker processes to terminate...')
+            pool.join()
+        logger.info('Exiting.')
+        sys.exit(1)
+    except Exception as e:
+        logger.error(e)
+        if args.verbose:
+            traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    args = parse_arguments()
+
+    loglevel = args.verbose and logging.DEBUG or logging.INFO
+    logging.basicConfig(level=loglevel, format=LOGGING_FORMAT)
+    logger = logging.getLogger('measure_signal')
+
+    measure_signal(args)

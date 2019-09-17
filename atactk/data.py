@@ -1,7 +1,7 @@
 #
 # atactk: ATAC-seq toolkit
 #
-# Copyright 2015 The Parker Lab at the University of Michigan
+# Copyright 2015 Stephen Parker
 #
 # Licensed under Version 3 of the GPL or any later version
 #
@@ -10,8 +10,6 @@
 """
 Code for reading and manipulating data commonly used in ATAC-seq pipelines.
 """
-
-from __future__ import print_function
 
 import csv
 import gzip
@@ -80,15 +78,12 @@ class ExtendedFeature(object):
         self.feature_end = int(end)
 
         # optional BED fields
-        self.name = name
-        self.score = float(score)
-        self.strand = strand
+        self.name = name or None
+        self.score = score and float(score) or None
+        self.strand = strand or None
 
         # region adjustments
         self.extension = int(extension)
-        self.is_reverse = strand == '-'
-        self.region_start = self.feature_start - self.extension
-        self.region_end = self.feature_end + self.extension
 
     def __str__(self):
         return '\t'.join(str(attribute or '') for attribute in [
@@ -102,12 +97,29 @@ class ExtendedFeature(object):
         ])
 
     @property
+    def center(self):
+        return self.feature_start + int(round(self.feature_length / 2.0))
+
+    @property
     def feature_length(self):
         return self.feature_end - self.feature_start
 
     @property
+    def is_reverse(self):
+        return self.strand == '-'
+
+    @property
+    def region_end(self):
+        return self.center + self.extension
+
+    @property
     def region_length(self):
-        return self.region_end - self.region_start
+        return self.extension * 2
+
+    @property
+    def region_start(self):
+        return self.center - self.extension
+
 
 def complement(seq):
     """
@@ -175,8 +187,9 @@ def open_maybe_gzipped(filename):
 
 def count_features(filename):
     count = 0
-    for line in open_maybe_gzipped(filename):
-        count += 1
+    with open_maybe_gzipped(filename) as f:
+        for line in f:
+            count += 1
     return count
 
 
@@ -203,24 +216,16 @@ def read_features(filename, extension=100, feature_class=ExtendedFeature):
         An :class:`ExtendedFeature` instance for each row of the file.
     """
 
-    if filename == '-':
-        source = sys.stdin
-    else:
-        source = open_maybe_gzipped(filename)
-    reader = csv.DictReader(source, fieldnames=FEATURE_FIELDNAMES, restkey='extra_fields', dialect='excel-tab')
-    for row in reader:
-        if 'extra_fields' in row:
-            del row['extra_fields']
-        yield feature_class(extension=extension, **row)
+    with filename == '-' and sys.stdin or open_maybe_gzipped(filename) as source:
+        reader = csv.DictReader(source, fieldnames=FEATURE_FIELDNAMES, restkey='extra_fields', dialect='excel-tab')
 
-
-ALIGNMENT_FILE_CACHE = {}
+        for row in reader:
+            if 'extra_fields' in row:
+                del row['extra_fields']
+            yield feature_class(extension=extension, **row)
 
 
 def open_alignment_file(alignment_filename):
-    if alignment_filename in ALIGNMENT_FILE_CACHE:
-        return ALIGNMENT_FILE_CACHE[alignment_filename]
-
     alignment_file = pysam.AlignmentFile(alignment_filename, 'rb')
     try:
         alignment_file.check_index()
@@ -228,7 +233,7 @@ def open_alignment_file(alignment_filename):
         raise AttributeError('The alignments file {} is not in BAM format. Please supply an indexed BAM file.'.format(alignment_filename))
     except ValueError:
         raise ValueError('The alignment file {} is not usable. Please supply an indexed BAM file.'.format(alignment_filename))
-    ALIGNMENT_FILE_CACHE[alignment_filename] = alignment_file
+
     return alignment_file
 
 

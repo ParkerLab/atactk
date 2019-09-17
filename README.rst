@@ -7,15 +7,24 @@ A toolkit for working with ATAC-seq data.
 What's in the box?
 ==================
 
-Programs we've found useful in ATAC-seq pipelines
--------------------------------------------------
+Programs we've found useful in analyzing ATAC-seq data
+------------------------------------------------------
 
-* ``trim_adapters``: based on Jason Buenrostro's utility for trimming
-  Illumina adapters by aligning paired reads to each other.
 * ``make_cut_matrix``: useful in conjunction with CENTIPEDE, and in
   generating plots of transcription factor binding sites.
-* ``plot_aggregate_matrix.R``: generates plots for motifs given the
+* ``make_midpoint_matrix``: useful in conjunction with CENTIPEDE, and in
+  generating plots of transcription factor binding sites.
+* ``measure_signal``: measures size and position of ATAC-seq fragments
+  overlapping genomic features.
+* ``measure_features``: given a bigWig file of coverage counts and a BED
+  file of features, calculates a requested statistic for each feature.
+* ``plot_aggregate_cut_matrix.R``: generates plots for motifs given the
   aggregate output of `make_cut_matrix`
+* ``plot_aggregate_midpoint_matrix.R``: generates plots for motifs given the
+  aggregate output of `make_midpoint_matrix`
+* ``plot_signal.R``: plots the output of `measure_signal`
+* ``trim_adapters``: based on Jason Buenrostro's utility for trimming
+  Illumina adapters by aligning paired reads to each other.
 
 A Python library you can use in your own tools for processing ATAC-seq data
 ---------------------------------------------------------------------------
@@ -31,7 +40,8 @@ you might find your pipeline can be simplified too.
 Requirements
 ============
 
-* Python. We've run it successfully under versions 2.7.10 and 3.4.3.
+* Python. We've run it successfully under versions 2.7 and 3.5.
+* pyBigWig
 * pysam
 * python-levenshtein
 * sexpdata
@@ -43,6 +53,10 @@ At the command line::
 
   git clone https://github.com/ParkerLab/atactk
   pip install ./atactk
+
+Or in one step, if you don't want a local copy::
+
+  pip install git+https://github.com/ParkerLab/atactk
 
 Documentation
 =============

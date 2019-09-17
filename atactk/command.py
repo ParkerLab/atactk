@@ -1,7 +1,7 @@
 #
 # atactk: ATAC-seq toolkit
 #
-# Copyright 2015 The Parker Lab at the University of Michigan
+# Copyright 2015 Stephen Parker
 #
 # Licensed under Version 3 of the GPL or any later version
 #
@@ -14,9 +14,12 @@ Code used in command-line applications.
 from __future__ import print_function
 
 import argparse
+import logging
 import sys
 
 import sexpdata
+
+import atactk
 
 
 def check_bins_for_overlap(bins):
@@ -39,28 +42,51 @@ def check_bins_for_overlap(bins):
     for bin in bins:
         start, end, resolution = bin
         if start <= last_end:
-            raise argparse.ArgumentTypeError("Bin %d-%d overlaps %d-%d." % (start, end, last_start, last_end))
+            raise argparse.ArgumentTypeError("Bin {:d}-{:d} overlaps {:d}-{:d}.".format(start, end, last_start, last_end))
         last_start, last_end = start, end
+
+
+def check_bin_resolutions(bins, extension):
+    """
+    Check the resolutions of a flattened list of bins.
+
+    Look for inconsistent resolutions, which tend to give suboptimal
+    results, or resolutions that don't divide the extended region
+    evenly.
+    """
+    logger = logging.getLogger("{}.{}".format(__name__, check_bin_resolutions.__name__))
+
+    resolutions = set(bin[2] for bin in bins)
+    if len(resolutions) > 1:
+        logger.warn("""We've found we usually get better results using the same resolution in each bin.""")
+
+    for bin in bins:
+        start, end, resolution = bin
+        if extension % resolution != 0:
+            logger.warn("Bin {:d}-{:d} resolution {:d} is not a divisor of extension {:d}".format(start, end, resolution, extension))
 
 
 def parse_bins(bins_string):
     """
-    Parse the string representing template size groups.
+    Parse the string representing fragment size groups.
 
     The bins are specified as a list of groups, each group comprising
     one or more bins, and ending with a resolution value, which
     controls how many individual cuts in the extended region around
     the feature are aggregated. Within the feature itself, we always
-    count the cut points for each base. A complete example:
+    count the cut points for each base.
 
-    (36-149 1) (150-224 225-324 2) (325-400 5)
+    We recommend using the same resolution in all bins. The following
+    example only shows different resolutions to be thorough.
+
+    Assume a --bins value of '(36-149 1) (150-224 225-324 2) (325-400 5)'.
 
     With a resolution of 1, every base in the extended region
-    around motifs overlapping templates of length 36-149 would be
+    around motifs overlapping fragments of length 36-149 would be
     scored independently; each base's cut count would be added to
     the matrix.
 
-    The second group, for templates of length 150-224 or 225-324,
+    The second group, for fragments of length 150-224 or 225-324,
     with a resolution of 2, would result in every two bases in the
     extended region around motifs being added together. Then the
     aggregate scores of the two bins in the group would be summed,
@@ -72,7 +98,7 @@ def parse_bins(bins_string):
 
     To illustrate, assume these settings and an imaginary motif 5
     bases long, with a 10-base extended region on either side, and
-    for the sake of example pretend that each template length bin
+    for the sake of example pretend that each fragment length bin
     had the same counts of cut points around the motif, shown
     here::
 
@@ -120,7 +146,7 @@ def parse_bins(bins_string):
             if resolution < 1:
                 raise ValueError
         except ValueError:
-            raise argparse.ArgumentTypeError("Resolution in bin group %s is not a positive integer." % g)
+            raise argparse.ArgumentTypeError("Resolution in bin group {} is not a positive integer.".format(g))
 
         for i, bin_string in enumerate(bin_group):
             bin_string = bin_string.value()
@@ -131,14 +157,18 @@ def parse_bins(bins_string):
                 start, end = [int(s) for s in bin]
                 if start > end:
                     start, end = end, start
-                    print("Bin %s specified backward; corrected to %d-%d" % (bin_string, start, end), file=sys.stderr)
+                    print("Bin {} specified backward; corrected to {:d}-{:d}".format(bin_string, start, end), file=sys.stderr)
 
                 group.append((start, end, resolution))
             except ValueError:
-                raise argparse.ArgumentTypeError("Bin %s in group %s is malformed." % (i, g))
+                raise argparse.ArgumentTypeError("Bin {} in group {} is malformed.".format(i, g))
         groups.append(group)
 
     # flatten groups to just a list of bins, sort, check for overlaps
     bins = sorted([b for bins in groups for b in bins])
     check_bins_for_overlap(bins)
     return groups
+
+
+def version(program_name=''):
+    return program_name + ' ' + atactk.__version__

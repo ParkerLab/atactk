@@ -11,13 +11,9 @@
 from __future__ import print_function
 
 import argparse
-import codecs
-import collections
 import gzip
 import os
 import re
-import string
-import sys
 
 import Levenshtein
 
@@ -25,6 +21,8 @@ import atactk.data
 
 
 FQ_FILENAME_RE = re.compile('^(?P<basename>[^/]+)\.(?P<fq>f(?:ast)?q)*(?P<gz>\.gz)*$')
+
+
 def make_trimmed_filename(original_filename):
     output_directory = os.path.dirname(original_filename)
     basename = os.path.basename(original_filename)
@@ -86,8 +84,8 @@ def trim_pair(pair):
         forward_read = trim_record(forward_read, trim_start, cut)
         reverse_read = trim_record(reverse_read, trim_start, cut)
 
-    forward_rec = ['%s\n' % i for i in forward_read]
-    reverse_rec = ['%s\n' % i for i in reverse_read]
+    forward_rec = ['{}\n'.format(i) for i in forward_read]
+    reverse_rec = ['{}\n'.format(i) for i in reverse_read]
     return forward_rec, reverse_rec
 
 
