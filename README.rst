@@ -1,7 +1,8 @@
+.. image:: https://zenodo.org/badge/DOI/10.5281/zenodo.4321161.svg
+   :target: https://doi.org/10.5281/zenodo.4321161
 ======
 atactk
 ======
-
 A toolkit for working with ATAC-seq data.
 
 What's in the box?
